@@ -1,0 +1,31 @@
+{
+  "name": "taxhub-workbench",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "gen-api": "openapi-typescript demo/openapi.json -o src/api/schema.d.ts",
+    "typecheck": "vue-tsc --noEmit",
+    "build": "vue-tsc --noEmit && vite build",
+    "test": "node --test demo/server.test.mjs"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "2.3.1",
+    "@tanstack/vue-query": "5.66.0",
+    "element-plus": "2.9.3",
+    "pinia": "2.3.1",
+    "vue": "3.5.13",
+    "vue-router": "4.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.7",
+    "@vitejs/plugin-vue": "5.2.1",
+    "openapi-typescript": "7.6.1",
+    "sass": "1.83.4",
+    "typescript": "5.6.3",
+    "vite": "6.0.11",
+    "vue-tsc": "2.2.0"
+  }
+}

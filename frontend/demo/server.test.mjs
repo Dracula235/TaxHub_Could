@@ -1,0 +1,28 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import {createServer} from 'node:http'
+import {mkdtempSync, rmSync} from 'node:fs'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
+import {createDemoHandler} from './server.mjs'
+
+async function setup(t,file){
+  const server=createServer(createDemoHandler({file}));await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>{server.closeAllConnections();server.close()})
+  const origin=`http://127.0.0.1:${server.address().port}/api/v1`;let cookie=''
+  async function call(path,method='GET',body,tenant='demo-a',key){const res=await fetch(origin+path,{method,headers:{cookie,'X-Tenant-ID':tenant,'Content-Type':'application/json',...(key?{'Idempotency-Key':key}:{})},body:body?JSON.stringify(body):undefined});if(res.headers.get('set-cookie'))cookie=res.headers.get('set-cookie').split(';')[0];return {status:res.status,data:await res.json()}}
+  return {call,origin,getCookie:()=>cookie}
+}
+test('auth, permissions and tenant isolation',async t=>{const {call}=await setup(t);assert.equal((await call('/invoices')).status,401);assert.equal((await call('/auth/login','POST',{account:'viewer',password:'wrong'})).status,401);await call('/auth/login','POST',{account:'viewer',password:'demo123'});assert.equal((await call('/invoices/inv-1/verify','POST')).status,403);assert.equal((await call('/invoices/inv-1','GET',undefined,'demo-b')).status,404);assert.equal((await call('/invoices','GET',undefined,'unknown')).status,403);assert.equal((await call('/invoices','GET',undefined,'demo-b')).data.total,6)})
+test('import, duplicate, verify, suggestion, accept and persistent voucher',async t=>{
+  const dir=mkdtempSync(join(tmpdir(),'taxhub-test-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));const file=join(dir,'state.json');const {call}=await setup(t,file);await call('/auth/login','POST',{account:'accountant',password:'demo123'})
+  const input={number:'DEMO-TEST-001',partner:'测试企业（演示）'};const created=await call('/invoices','POST',input);assert.equal(created.status,200);assert.equal((await call('/invoices','POST',input)).status,409)
+  const id=created.data.id;assert.equal((await call(`/invoices/${id}/suggestions`,'POST')).status,409)
+  const verified=await call(`/invoices/${id}/verify`,'POST',undefined,'demo-a','verify-1');assert.equal(verified.data.status,'verified');assert.equal((await call(`/invoices/${id}/verify`,'POST',undefined,'demo-a','verify-1')).status,200)
+  const suggested=await call(`/invoices/${id}/suggestions`,'POST');assert.equal(suggested.data.status,'pending_posting')
+  const accepted=await call(`/suggestions/${suggested.data.suggestion.id}/accept`,'POST',undefined,'demo-a','accept-1');assert.equal(accepted.data.status,'posted');assert.equal((await call(`/suggestions/${suggested.data.suggestion.id}/accept`,'POST',undefined,'demo-a','accept-1')).status,200)
+  const second=await setup(t,file);await second.call('/auth/login','POST',{account:'accountant',password:'demo123'});const persisted=await second.call(`/invoices/${id}`);assert.equal(persisted.data.status,'posted');const voucher=await second.call(`/vouchers/${persisted.data.voucher_id}`);assert.equal(voucher.data.debit_total,voucher.data.credit_total)
+  const cents=value=>Math.round(Number(value)*100);assert.equal(voucher.data.lines.reduce((n,r)=>n+cents(r.debit),0),cents(voucher.data.debit_total));assert.equal(voucher.data.lines.reduce((n,r)=>n+cents(r.credit),0),cents(voucher.data.credit_total))
+})
+test('batch rejects low confidence; confidence matches 50/30/20 evidence',async t=>{const {call}=await setup(t);await call('/auth/login','POST',{account:'accountant',password:'demo123'});const page=(await call('/invoices?status=pending_posting')).data;for(const row of page.items){const signals=row.suggestion.signals;const expected=signals.reduce((n,s)=>n+parseFloat(s.value)*parseFloat(s.weight)/10000,0);assert.ok(Math.abs(row.suggestion.confidence-expected)<0.0001)}const result=(await call('/suggestions/batch-accept','POST',{ids:['s-inv-1','s-inv-5','s-inv-31']})).data;assert.deepEqual(result.processed,['s-inv-1']);assert.deepEqual(result.skipped,['s-inv-5','s-inv-31']);assert.equal((await call('/invoices/inv-5')).data.status,'pending_posting')})
+test('search, pagination and risk transitions',async t=>{const {call}=await setup(t);await call('/auth/login','POST',{account:'tax',password:'demo123'});assert.equal((await call('/invoices?q=DEMO-202611-0001')).data.total,1);assert.equal((await call('/invoices?page=2&page_size=20')).data.items.length,10);assert.equal((await call('/invoices?period=2025-01')).data.total,0);assert.equal((await call('/risks/risk-1/transition','POST',{owner:'财务专员',note:''})).status,422);for(const status of ['assigned','investigating','closed'])assert.equal((await call('/risks/risk-1/transition','POST',{owner:'财务专员',note:'演示核查完成'})).data.status,status);assert.equal((await call('/risks/risk-1/transition','POST',{owner:'财务专员',note:'重复关闭'})).status,409);assert.equal((await call('/dashboard/summary')).data.risks,1)})
+test('SSE sends invalidation events after mutation',async t=>{const {call,origin,getCookie}=await setup(t);await call('/auth/login','POST',{account:'accountant',password:'demo123'});const controller=new AbortController();t.after(()=>controller.abort());const response=await fetch(origin+'/events?tenant_id=demo-a',{headers:{cookie:getCookie()},signal:controller.signal});assert.match(response.headers.get('content-type'),/text\/event-stream/);const reader=response.body.getReader();await reader.read();await call('/invoices/inv-4/verify','POST');const chunk=await reader.read();assert.match(new TextDecoder().decode(chunk.value),/invoice.status_changed/);controller.abort()})

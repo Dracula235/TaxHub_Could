@@ -1,0 +1,2 @@
+<script setup lang="ts">import {useRoute} from 'vue-router';import PageHeader from '../components/PageHeader.vue';import EmptyState from '../components/EmptyState.vue';const route=useRoute()</script>
+<template><PageHeader :title="String(route.meta.title)" description="税枢云企业财税工作台"/><section class="panel"><EmptyState :title="route.meta.title==='页面不存在'?'页面不存在':'该模块将在 P1 开放'" :description="route.path==='/filings'?'税务申报将在 T12 接入台账、底稿生成、勾稽校验及来源追溯。':undefined"><RouterLink to="/dashboard"><el-button type="primary">返回工作台</el-button></RouterLink></EmptyState></section></template>

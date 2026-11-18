@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.demo/
+*.log
+.env
+.env.*
+!.env.example
+backend/.venv/
+backend/.local/
+__pycache__/
+.pytest_cache/
+.idea/
+.pnpm-store/
+

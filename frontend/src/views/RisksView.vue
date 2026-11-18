@@ -1,0 +1,18 @@
+<script setup lang="ts">
+import { computed,ref } from 'vue'
+import { useQuery } from '@tanstack/vue-query'
+import { useRouter } from 'vue-router'
+import { api } from '../api/client'
+import { useSession } from '../stores/session'
+import { useAction } from '../composables/useAction'
+import PageHeader from '../components/PageHeader.vue'
+import DataTable from '../components/DataTable.vue'
+import StatusTag from '../components/StatusTag.vue'
+import DetailDrawer from '../components/DetailDrawer.vue'
+const session=useSession(),router=useRouter(),{busy,run}=useAction(),page=ref(1),id=ref(''),owner=ref('财务专员'),note=ref('')
+const list=useQuery({queryKey:computed(()=>['risks',session.tenant,page.value]),queryFn:()=>api('/risks','get',{tenant:session.tenant,params:{page:page.value}})})
+const risk=computed(()=>list.data.value?.items.find(r=>r.id===id.value))
+const actionLabel=computed(()=>({open:'指派负责人',assigned:'开始调查',investigating:'关闭风险'}[risk.value?.status||'']||''))
+async function transition(){const success=await run(`risk:${id.value}:${risk.value?.status}`,key=>api('/risks/{id}/transition','post',{tenant:session.tenant,id:id.value,body:{owner:owner.value,note:note.value},key}),'风险处置记录已更新');if(success)note.value=''}
+</script>
+<template><PageHeader title="风险管控" description="发现异常，记录核查，让业务风险有迹可循。"><span class="demo-label">演示规则结果</span></PageHeader><section class="panel"><DataTable :loading="list.isFetching.value" :error="list.error.value" :total="list.data.value?.total||0" :page="page" @retry="list.refetch()" @page="page=$event"><el-table :data="list.data.value?.items||[]" empty-text="当前主体暂无风险记录"><el-table-column label="风险事项" prop="title" min-width="220"/><el-table-column label="严重程度" width="120"><template #default="{row}"><el-tag :type="row.severity==='高'?'danger':'warning'">{{row.severity}}风险</el-tag></template></el-table-column><el-table-column label="负责人" min-width="140"><template #default="{row}">{{row.owner||'待指派'}}</template></el-table-column><el-table-column label="状态" width="130"><template #default="{row}"><StatusTag :status="row.status"/></template></el-table-column><el-table-column label="操作" width="100"><template #default="{row}"><el-button link type="primary" @click="id=row.id;owner=row.owner||'财务专员';note=''">查看详情</el-button></template></el-table-column></el-table></DataTable></section><DetailDrawer :model-value="!!id" title="风险详情与处置" @update:model-value="!$event&&(id='')"><template v-if="risk"><div class="detail-heading"><h2>{{risk.title}}</h2><StatusTag :status="risk.status"/></div><p class="risk-description">{{risk.description}}</p><el-button type="primary" plain @click="router.push(`/invoices/${risk.invoice_id}`)">查看关联发票 ↗</el-button><h3 class="section-label">处置记录</h3><el-timeline><el-timeline-item v-for="(event,i) in risk.history" :key="i">{{event}}</el-timeline-item></el-timeline><p v-if="!risk.history.length" class="small-muted">尚无处置记录</p><template v-if="risk.status!=='closed'&&session.can('risk:write')"><label class="form-label">授权负责人</label><el-select v-model="owner" aria-label="授权负责人" :disabled="risk.status!=='open'"><el-option v-for="person in ['财务专员','税务专员']" :key="person" :value="person"/></el-select><label class="form-label">处置说明</label><el-input v-model="note" type="textarea" :rows="4" maxlength="500" show-word-limit aria-label="处置说明" placeholder="记录核查依据与处理结果"/></template></template><template #footer><el-button @click="id=''">关闭</el-button><el-button v-if="actionLabel&&session.can('risk:write')" type="primary" :loading="busy" :disabled="!note.trim()" @click="transition">{{actionLabel}}</el-button></template></DetailDrawer></template>
